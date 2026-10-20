@@ -24,17 +24,29 @@
         
         /* Trạng thái kết nối */
         #connection-status { 
-            font-size: 0.9em; 
-            padding: 6px 15px; 
+            font-size: 14px; 
+            padding: 8px 20px; 
             border-radius: 20px; 
             background: #e0e0e0; 
             display: inline-block; 
-            margin-bottom: 20px;
+            margin-bottom: 10px;
             font-weight: bold;
             transition: 0.3s;
         }
         .connected { background: #c8e6c9 !important; color: #2e7d32; }
         .disconnected { background: #ffcdd2 !important; color: #c62828; }
+        .connecting { background: #fff9c4 !important; color: #f57f17; }
+
+        /* Hộp thoại gỡ lỗi trên màn hình */
+        #debug-log {
+            font-family: monospace;
+            font-size: 12px;
+            color: #666;
+            margin: 0 auto 20px auto;
+            max-width: 600px;
+            height: 40px;
+            overflow: hidden;
+        }
 
         /* Thông điệp Cảnh báo chính */
         #status-text {
@@ -63,7 +75,6 @@
             width: 160px; 
             transition: transform 0.2s, background-color 0.3s;
         }
-        .card:hover { transform: translateY(-5px); }
         .card h3 { margin: 0; font-size: 14px; color: #666; text-transform: uppercase; }
         .card h2 { margin: 10px 0 0 0; font-size: 28px; color: #2c3e50; }
         
@@ -104,16 +115,13 @@
             height: 280px; 
         }
         .chart-container-large { flex: 1 1 45%; height: 320px; } 
-
-        @media (max-width: 768px) {
-            .card { width: 40%; }
-        }
     </style>
 </head>
 <body>
 
     <h1>TRUNG TÂM GIÁM SÁT THIÊN TAI</h1>
     <div id="connection-status" class="disconnected">Khởi động kết nối...</div>
+    <div id="debug-log">Log: Đang chuẩn bị...</div>
     <div id="status-text">Đang chờ dữ liệu từ thiết bị...</div>
 
     <!-- 5 Thẻ Số liệu -->
@@ -140,16 +148,22 @@
 
     <script>
         // ==========================================
-        // 1. CẤU HÌNH MQTT (WebSockets)
+        // 1. CẤU HÌNH MQTT (WebSockets CỰC KỲ QUAN TRỌNG)
         // ==========================================
         const MQTT_BROKER = "broker.hivemq.com";
-        const MQTT_PORT = 8000; // Phải dùng cổng 8000 cho WebSockets, KHÔNG dùng 1883
-        
-        // COPY CHÍNH XÁC TÊN TOPIC TRONG CODE ESP32 VÀO ĐÂY
+        // CỔNG 8884: Dành cho kết nối Bảo mật (WSS/HTTPS) - Bắt buộc nếu up lên GitHub Pages
+        const MQTT_PORT = 8884; 
         const MQTT_TOPIC = "thientai/giamsat/vuhuytuan_12345"; 
         
+        // Hàm in log ra màn hình web để dễ gỡ lỗi
+        function logDebug(msg) {
+            const time = new Date().toLocaleTimeString();
+            document.getElementById('debug-log').innerText = `[${time}] ${msg}`;
+            console.log(msg);
+        }
+
         // ==========================================
-        // 2. KHỞI TẠO 5 BIỂU ĐỒ (CHART.JS)
+        // 2. KHỞI TẠO 5 BIỂU ĐỒ
         // ==========================================
         function createChart(ctxId, label, color) {
             return new Chart(document.getElementById(ctxId).getContext('2d'), {
@@ -160,17 +174,12 @@
                         label: label, 
                         borderColor: color, 
                         backgroundColor: color.replace('1)', '0.15)'), 
-                        borderWidth: 2, 
-                        pointRadius: 3,
-                        pointBackgroundColor: color,
-                        fill: true, 
-                        data: [] 
+                        borderWidth: 2, pointRadius: 2, fill: true, data: [] 
                     }] 
                 },
                 options: { 
-                    responsive: true, 
-                    maintainAspectRatio: false,
-                    animation: { duration: 0 }, // Tắt animation để vẽ Real-time không bị giật
+                    responsive: true, maintainAspectRatio: false,
+                    animation: { duration: 0 }, 
                     scales: { x: { display: true } }
                 }
             });
@@ -185,119 +194,105 @@
         // ==========================================
         // 3. LOGIC KẾT NỐI VÀ XỬ LÝ MQTT
         // ==========================================
-        // ID cho Client web (random để không bị đá văng khi mở nhiều tab)
-        const clientId = "WebMonitor-" + Math.random().toString(16).substr(2, 8);
-        const mqttClient = new Paho.MQTT.Client(MQTT_BROKER, MQTT_PORT, clientId);
+        let mqttClient;
 
-        // Gắn các hàm sự kiện
-        mqttClient.onConnectionLost = onConnectionLost;
-        mqttClient.onMessageArrived = onMessageArrived;
-
-        const connectOptions = {
-            timeout: 3,
-            onSuccess: onConnect,
-            onFailure: function (message) {
-                console.error("Lỗi kết nối MQTT: " + message.errorMessage);
-                updateConnectionStatus("Lỗi kết nối. Thử lại sau 3s...", false);
-                setTimeout(startMqttConnection, 3000);
-            }
-        };
-
-        function updateConnectionStatus(msg, isConnected) {
+        function updateConnectionStatus(msg, state) {
             const div = document.getElementById('connection-status');
             div.innerText = msg;
-            if(isConnected) {
-                div.classList.add('connected');
-                div.classList.remove('disconnected');
-            } else {
-                div.classList.remove('connected');
-                div.classList.add('disconnected');
-            }
+            div.className = state; // 'connected', 'disconnected', 'connecting'
         }
 
         function startMqttConnection() {
-            updateConnectionStatus("Đang kết nối đến MQTT Broker...", false);
+            updateConnectionStatus("Đang kết nối đến HiveMQ...", "connecting");
+            logDebug(`Khởi tạo Client kết nối tới ${MQTT_BROKER}:${MQTT_PORT} (WSS)`);
+            
+            const clientId = "WebClient_" + Math.random().toString(16).substr(2, 8);
+            mqttClient = new Paho.MQTT.Client(MQTT_BROKER, MQTT_PORT, clientId);
+
+            mqttClient.onConnectionLost = onConnectionLost;
+            mqttClient.onMessageArrived = onMessageArrived;
+
+            const connectOptions = {
+                timeout: 5,
+                useSSL: true, // BẮT BUỘC ĐỂ KHÔNG BỊ TRÌNH DUYỆT CHẶN (HTTPS)
+                onSuccess: onConnect,
+                onFailure: function (message) {
+                    logDebug("Lỗi kết nối: " + message.errorMessage);
+                    updateConnectionStatus("Lỗi kết nối. Thử lại sau 3s...", "disconnected");
+                    setTimeout(startMqttConnection, 3000);
+                }
+            };
+
             mqttClient.connect(connectOptions);
         }
 
         function onConnect() {
-            updateConnectionStatus("MQTT: Đang hoạt động (Real-time)", true);
-            mqttClient.subscribe(MQTT_TOPIC); // Đăng ký nhận tin từ ESP32
-            console.log("Đã kết nối và Subscribe topic: " + MQTT_TOPIC);
+            updateConnectionStatus("MQTT: Đang hoạt động (Real-time)", "connected");
+            logDebug(`Kết nối thành công! Đang Subscribe: ${MQTT_TOPIC}`);
+            mqttClient.subscribe(MQTT_TOPIC); 
         }
 
         function onConnectionLost(responseObject) {
             if (responseObject.errorCode !== 0) {
-                console.warn("Mất kết nối MQTT: " + responseObject.errorMessage);
-                updateConnectionStatus("Mất kết nối. Đang thử kết nối lại...", false);
+                logDebug("Rớt mạng: " + responseObject.errorMessage);
+                updateConnectionStatus("Mất kết nối. Đang thử kết nối lại...", "disconnected");
                 setTimeout(startMqttConnection, 3000);
             }
         }
 
         // ==========================================
-        // 4. XỬ LÝ DỮ LIỆU KHI CÓ TIN NHẮN TỪ ESP32
+        // 4. XỬ LÝ DỮ LIỆU TỪ ESP32
         // ==========================================
         function onMessageArrived(message) {
             try {
-                // Giải mã chuỗi JSON do ESP32 đóng gói
                 const data = JSON.parse(message.payloadString);
                 const time = new Date().toLocaleTimeString();
+                logDebug(`Đã nhận dữ liệu mới lúc ${time}`);
 
-                // 4.1 Cập nhật số lên 5 thẻ Card
+                // Cập nhật số lên Thẻ
                 document.getElementById('val-soil').innerText = data.soil + " %";
                 document.getElementById('val-vib').innerText  = data.vib + " m/s²";
                 document.getElementById('val-x').innerText    = data.angleX + " °";
                 document.getElementById('val-y').innerText    = data.angleY + " °";
                 document.getElementById('val-z').innerText    = data.angleZ + " °";
 
-                // 4.2 Xử lý Logic màu sắc và Cảnh báo
+                // Xử lý Cảnh báo
                 const maxTilt = Math.max(Math.abs(data.angleX), Math.abs(data.angleY));
                 const statusText = document.getElementById('status-text');
 
-                // Reset màu CSS
-                document.querySelectorAll('.card').forEach(c => { c.classList.remove('danger'); c.classList.remove('warning'); });
+                document.querySelectorAll('.card').forEach(c => { c.classList.remove('danger', 'warning'); });
                 statusText.style.backgroundColor = "transparent";
                 statusText.style.color = "#333";
 
-                // Cấp độ 1: Động đất (Ưu tiên cao nhất)
                 if (data.isEarthquake || data.vib > 2.0) { 
                     document.getElementById('card-vib').classList.add('danger');
                     statusText.innerText = "🚨 KHẨN CẤP: PHÁT HIỆN ĐỘNG ĐẤT 🚨";
-                    statusText.style.backgroundColor = "#ffcdd2";
-                    statusText.style.color = "#c62828";
+                    statusText.style.backgroundColor = "#ffcdd2"; statusText.style.color = "#c62828";
                 } 
-                // Cấp độ 2: Sạt lở
                 else if (data.isLandslide || data.soil > 80 || maxTilt > 30.0) { 
                     if(data.soil > 80) document.getElementById('card-soil').classList.add('danger');
                     if(Math.abs(data.angleX) > 30) document.getElementById('card-x').classList.add('danger');
                     if(Math.abs(data.angleY) > 30) document.getElementById('card-y').classList.add('danger');
                     
                     statusText.innerText = "⚠️ BÁO ĐỘNG: NGUY CƠ SẠT LỞ CAO ⚠️";
-                    statusText.style.backgroundColor = "#ffe0b2";
-                    statusText.style.color = "#e65100";
+                    statusText.style.backgroundColor = "#ffe0b2"; statusText.style.color = "#e65100";
                 } 
-                // Cấp độ 3: Bất thường nhẹ
                 else if (data.vib > 1.0 || data.soil > 60 || maxTilt > 20.0) {
                     if(data.vib > 1.0) document.getElementById('card-vib').classList.add('warning');
                     if(data.soil > 60) document.getElementById('card-soil').classList.add('warning');
                     statusText.innerText = "Chú ý: Có dấu hiệu bất thường";
                     statusText.style.color = "#ef6c00";
                 } 
-                // Bình thường
                 else {
-                    statusText.innerText = "✅ Hệ thống an toàn. Không có dấu hiệu bất thường.";
+                    statusText.innerText = "✅ Hệ thống an toàn.";
                     statusText.style.color = "#2e7d32";
                 }
 
-                // 4.3 Cập nhật mảng dữ liệu cho 5 biểu đồ
+                // Vẽ Biểu đồ
                 const updateChartData = (chart, value) => {
                     chart.data.labels.push(time);
                     chart.data.datasets[0].data.push(value);
-                    // Giữ lại 30 điểm dữ liệu (1 phút nếu gửi 2s/lần)
-                    if (chart.data.labels.length > 30) {
-                        chart.data.labels.shift();
-                        chart.data.datasets[0].data.shift();
-                    }
+                    if (chart.data.labels.length > 30) { chart.data.labels.shift(); chart.data.datasets[0].data.shift(); }
                     chart.update();
                 };
 
@@ -307,15 +302,11 @@
                 updateChartData(yChart, data.angleY);
                 updateChartData(zChart, data.angleZ);
 
-            } catch (e) {
-                console.error("Lỗi khi phân tích JSON: ", e);
-            }
+            } catch (e) { logDebug("Lỗi đọc JSON: " + e.message); }
         }
 
-        // Bắt đầu chạy
-        window.onload = function() {
-            startMqttConnection();
-        };
+        // Tự động chạy khi mở web
+        window.onload = startMqttConnection;
     </script>
 </body>
 </html>
