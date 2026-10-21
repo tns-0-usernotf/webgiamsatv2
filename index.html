@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hệ Thống Giám Sát Kép (ThingSpeak + MQTT)</title>
+    <title>Hệ Thống Giám Sát Thiên Tai (Hybrid)</title>
     
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
@@ -19,7 +19,7 @@
         .bg-gray { background: #e0e0e0; color: #666; }
         .bg-red { background: #ffcdd2; color: #c62828; }
         
-        #alert-box { font-size: 22px; font-weight: bold; padding: 10px; max-width: 600px; margin: 0 auto 20px; border-radius: 8px; transition: 0.3s; }
+        #alert-box { font-size: 22px; font-weight: bold; padding: 15px; max-width: 600px; margin: 0 auto 20px; border-radius: 8px; transition: 0.3s; background-color: white; border: 1px solid #ccc;}
 
         .dashboard { display: flex; justify-content: center; flex-wrap: wrap; gap: 15px; margin-top: 10px; }
         .card { background: white; padding: 15px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); width: 160px; }
@@ -27,7 +27,8 @@
         .card h2 { margin: 8px 0 0 0; font-size: 24px; color: #2c3e50; }
         .card p { margin: 5px 0 0 0; font-size: 11px; color: #999; }
 
-        .danger { background-color: #ffebee !important; color: #c62828 !important; border: 2px solid #ef5350; }
+        .danger { background-color: #ffebee !important; color: #c62828 !important; border: 2px solid #ef5350 !important; }
+        .warning { background-color: #fff3e0 !important; border: 2px solid #ff9800 !important; }
 
         .section-title { margin-top: 40px; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 1px; color: #555; border-bottom: 2px solid #ccc; display: inline-block; padding-bottom: 5px;}
         
@@ -38,203 +39,8 @@
 </head>
 <body>
 
-    <h1>HỆ THỐNG GIÁM SÁT KÉP (HYBRID)</h1>
+    <h1>HỆ THỐNG GIÁM SÁT THIÊN TAI (HYBRID)</h1>
     
     <div class="status-bar">
         <div id="status-mqtt" class="badge bg-gray">MQTT: Đang kết nối...</div>
-        <div id="status-http" class="badge bg-green">ThingSpeak: Đang chờ 60s</div>
-    </div>
-    
-    <div id="alert-box">Đang khởi tạo hệ thống...</div>
-
-    <!-- 5 Thẻ Số liệu -->
-    <div class="dashboard">
-        <div class="card" id="card-soil"><h3>Độ ẩm đất</h3><h2 id="val-soil">-- %</h2><p>Nguồn: ThingSpeak (HTTP)</p></div>
-        <div class="card" id="card-vib"><h3>Rung chấn</h3><h2 id="val-vib">-- m/s²</h2><p>Nguồn: ThingSpeak (HTTP)</p></div>
-        <div class="card" id="card-x"><h3>Trục X (Pitch)</h3><h2 id="val-x">-- °</h2><p>Nguồn: HiveMQ (MQTT)</p></div>
-        <div class="card" id="card-y"><h3>Trục Y (Roll)</h3><h2 id="val-y">-- °</h2><p>Nguồn: HiveMQ (MQTT)</p></div>
-        <div class="card" id="card-z"><h3>Trục Z (Yaw)</h3><h2 id="val-z">-- °</h2><p>Nguồn: HiveMQ (MQTT)</p></div>
-    </div>
-
-    <!-- BIỂU ĐỒ 1: Nguồn ThingSpeak (Chậm) -->
-    <h3 class="section-title">Dữ liệu Môi trường (Cập nhật 60s/lần qua ThingSpeak)</h3>
-    <div class="charts-row">
-        <div class="chart-container chart-large"><canvas id="soilChart"></canvas></div>
-        <div class="chart-container chart-large"><canvas id="vibChart"></canvas></div>
-    </div>
-
-    <!-- BIỂU ĐỒ 2: Nguồn MQTT (Nhanh) -->
-    <h3 class="section-title">Giám sát Không gian & Khẩn cấp (Real-time qua MQTT)</h3>
-    <div class="charts-row">
-        <div class="chart-container"><canvas id="xChart"></canvas></div>
-        <div class="chart-container"><canvas id="yChart"></canvas></div>
-        <div class="chart-container"><canvas id="zChart"></canvas></div>
-    </div>
-
-    <script>
-        // ==========================================
-        // 1. CẤU HÌNH API & MQTT
-        // ==========================================
-        const TS_CHANNEL_ID = "3349950"; 
-        const TS_READ_API_KEY = "J19ZUM4EVA7CGQLJ";
-        
-        const MQTT_BROKER = "broker.hivemq.com";
-        const MQTT_PORT = 8884; // SSL/WSS
-        const MQTT_TOPIC = "thientai/giamsat/vuhuytuan_12345"; 
-        
-        // ==========================================
-        // 2. KHỞI TẠO BIỂU ĐỒ
-        // ==========================================
-        function createChart(ctxId, label, color, isRealTime = false) {
-            return new Chart(document.getElementById(ctxId).getContext('2d'), {
-                type: 'line',
-                data: { labels: [], datasets: [{ label: label, borderColor: color, backgroundColor: color.replace('1)', '0.15)'), borderWidth: 2, pointRadius: 3, fill: true, data: [] }] },
-                options: { 
-                    responsive: true, maintainAspectRatio: false,
-                    animation: isRealTime ? { duration: 0 } : true // MQTT vẽ liên tục nên tắt hiệu ứng
-                }
-            });
-        }
-
-        const soilChart = createChart('soilChart', 'Độ ẩm đất (%)', 'rgba(33, 150, 243, 1)', false); 
-        const vibChart  = createChart('vibChart', 'Rung chấn (m/s²)', 'rgba(244, 67, 54, 1)', false); 
-        
-        const xChart = createChart('xChart', 'Nghiêng Trục X (°)', 'rgba(255, 152, 0, 1)', true); 
-        const yChart = createChart('yChart', 'Nghiêng Trục Y (°)', 'rgba(156, 39, 176, 1)', true); 
-        const zChart = createChart('zChart', 'Xoay Trục Z (°/s)', 'rgba(76, 175, 80, 1)', true); 
-
-        function pushDataToChart(chart, time, value, maxPoints) {
-            chart.data.labels.push(time);
-            chart.data.datasets[0].data.push(value);
-            if (chart.data.labels.length > maxPoints) {
-                chart.data.labels.shift();
-                chart.data.datasets[0].data.shift();
-            }
-            chart.update();
-        }
-
-        // ==========================================
-        // 3. LUỒNG HTTP (THINGSPEAK) - CHỈ LẤY SOIL VÀ VIB
-        // ==========================================
-        let lastVib = 0, lastSoil = 0; // Biến tạm cho Cảnh báo tổng hợp
-
-        async function fetchThingSpeakData() {
-            const url = `https://api.thingspeak.com/channels/${TS_CHANNEL_ID}/feeds.json?api_key=${TS_READ_API_KEY}&results=1`;
-            const statusHttp = document.getElementById('status-http');
-            
-            try {
-                statusHttp.innerText = "ThingSpeak: Đang tải...";
-                const response = await fetch(url);
-                const data = await response.json();
-                const feed = data.feeds[0]; 
-
-                // CHỈ BẮT DỮ LIỆU ĐỘ ẨM (Field1) VÀ RUNG CHẤN (Field2)
-                lastSoil = parseFloat(feed.field1);
-                lastVib = parseFloat(feed.field2);
-                const time = new Date(feed.created_at).toLocaleTimeString();
-
-                document.getElementById('val-soil').innerText = lastSoil + " %";
-                document.getElementById('val-vib').innerText  = lastVib + " m/s²";
-
-                // CHỈ VẼ 2 BIỂU ĐỒ NÀY, lưu tối đa 10 điểm (10 phút)
-                pushDataToChart(soilChart, time, lastSoil, 10);
-                pushDataToChart(vibChart, time, lastVib, 10);
-
-                updateAlertBox(lastVib, lastSoil, 0, 0);
-                
-                statusHttp.innerText = "ThingSpeak: Đã cập nhật";
-                setTimeout(() => { statusHttp.innerText = "ThingSpeak: Đang chờ 60s"; }, 3000);
-            } catch (error) { 
-                console.error("Lỗi HTTP:", error); 
-                statusHttp.innerText = "ThingSpeak: Lỗi kết nối";
-                statusHttp.className = "badge bg-red";
-            }
-        }
-
-        // Chạy HTTP Fetch mỗi 60 giây
-        setInterval(fetchThingSpeakData, 60000);
-        fetchThingSpeakData(); // Chạy ngay lần đầu tiên mở Web
-
-        // ==========================================
-        // 4. LUỒNG MQTT (HIVEMQ) - CHỈ LẤY GÓC X,Y,Z VÀ CẢNH BÁO
-        // ==========================================
-        const clientId = "WebHybrid-" + Math.random().toString(16).substr(2, 8);
-        const mqttClient = new Paho.MQTT.Client(MQTT_BROKER, MQTT_PORT, clientId);
-
-        mqttClient.onConnectionLost = function(res) {
-            document.getElementById('status-mqtt').className = "badge bg-red";
-            document.getElementById('status-mqtt').innerText = "MQTT: Mất kết nối";
-            setTimeout(startMqtt, 3000);
-        };
-
-        mqttClient.onMessageArrived = function(message) {
-            try {
-                const data = JSON.parse(message.payloadString);
-                const time = new Date().toLocaleTimeString();
-
-                // BẮT DỮ LIỆU GÓC TỪ CHUỖI JSON
-                const angleX = data.angleX || 0;
-                const angleY = data.angleY || 0;
-                const angleZ = data.angleZ || 0;
-
-                // CHỈ CẬP NHẬT 3 THẺ GÓC NGHIÊNG
-                document.getElementById('val-x').innerText = angleX + " °";
-                document.getElementById('val-y').innerText = angleY + " °";
-                document.getElementById('val-z').innerText = angleZ + " °";
-
-                // CHỈ VẼ 3 BIỂU ĐỒ GÓC, lưu 30 điểm (vì MQTT bắn liên tục)
-                pushDataToChart(xChart, time, angleX, 30);
-                pushDataToChart(yChart, time, angleY, 30);
-                pushDataToChart(zChart, time, angleZ, 30);
-
-                // ==========================================
-                // ĐÁNH GIÁ CẢNH BÁO KHẨN CẤP
-                // (Phối hợp Rung chấn/Ẩm từ HTTP và Góc nghiêng từ MQTT)
-                // ==========================================
-                const maxTilt = Math.max(Math.abs(angleX), Math.abs(angleY));
-                const alertBox = document.getElementById('alert-box');
-
-                document.querySelectorAll('.card').forEach(c => c.classList.remove('danger'));
-
-                if (data.isEarthquake || lastVib > 2.0) { 
-                    document.getElementById('card-vib').classList.add('danger');
-                    alertBox.innerText = "🚨 ĐỘNG ĐẤT: KHẨN CẤP 🚨";
-                    alertBox.style.backgroundColor = "#ffcdd2"; alertBox.style.color = "#c62828";
-                } 
-                else if (data.isLandslide || lastSoil > 80 || maxTilt > 30.0) { 
-                    if(lastSoil > 80) document.getElementById('card-soil').classList.add('danger');
-                    if(Math.abs(angleX) > 30) document.getElementById('card-x').classList.add('danger');
-                    if(Math.abs(angleY) > 30) document.getElementById('card-y').classList.add('danger');
-                    
-                    alertBox.innerText = "⚠️ SẠT LỞ: CẢNH BÁO MỨC ĐỘ CAO ⚠️";
-                    alertBox.style.backgroundColor = "#ffe0b2"; alertBox.style.color = "#e65100";
-                } 
-                else if (lastVib > 1.0 || lastSoil > 60 || maxTilt > 20.0) {
-                    alertBox.innerText = "Chú ý: Hệ thống ghi nhận bất thường";
-                    alertBox.style.backgroundColor = "transparent"; alertBox.style.color = "#ef6c00";
-                } 
-                else {
-                    alertBox.innerText = "✅ Hệ thống đang trong trạng thái an toàn";
-                    alertBox.style.backgroundColor = "transparent"; alertBox.style.color = "#2e7d32";
-                }
-
-            } catch (e) { console.error("Lỗi JSON MQTT: ", e); }
-        };
-
-        function startMqtt() {
-            mqttClient.connect({
-                timeout: 5, useSSL: true,
-                onSuccess: function() {
-                    document.getElementById('status-mqtt').className = "badge bg-green";
-                    document.getElementById('status-mqtt').innerText = "MQTT: Real-time OK";
-                    mqttClient.subscribe(MQTT_TOPIC); 
-                },
-                onFailure: function() { setTimeout(startMqtt, 3000); }
-            });
-        }
-
-        // Khởi động MQTT
-        startMqtt();
-    </script>
-</body>
-</html>
+        <div id="status-http" class="badge bg-
