@@ -139,6 +139,8 @@
                 // CHỈ VẼ 2 BIỂU ĐỒ NÀY, lưu tối đa 10 điểm (10 phút)
                 pushDataToChart(soilChart, time, lastSoil, 10);
                 pushDataToChart(vibChart, time, lastVib, 10);
+
+                updateAlertBox(lastVib, lastSoil, 0, 0);
                 
                 statusHttp.innerText = "ThingSpeak: Đã cập nhật";
                 setTimeout(() => { statusHttp.innerText = "ThingSpeak: Đang chờ 60s"; }, 3000);
