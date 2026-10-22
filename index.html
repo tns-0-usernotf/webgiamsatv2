@@ -31,7 +31,6 @@
 
         .section-title { margin-top: 40px; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 1px; color: #555; border-bottom: 2px solid #ccc; display: inline-block; padding-bottom: 5px;}
         
-        /* Chỉnh lại Grid để chứa 4 biểu đồ chia làm 2 hàng ngang */
         .charts-row { display: flex; justify-content: center; flex-wrap: wrap; gap: 20px; width: 95%; max-width: 1200px; margin: 0 auto; margin-bottom: 30px;}
         .chart-container { flex: 1 1 45%; background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); min-width: 300px; height: 300px; }
     </style>
@@ -89,7 +88,7 @@
         let currentSoil = 0;
         
         // ==========================================
-        // 2. KHỞI TẠO BIỂU ĐỒ (4 BIỂU ĐỒ ĐỘC LẬP)
+        // 2. KHỞI TẠO BIỂU ĐỒ
         // ==========================================
         function createChart(ctxId, label, color) {
             return new Chart(document.getElementById(ctxId).getContext('2d'), {
@@ -99,11 +98,9 @@
             });
         }
 
-        // Biểu đồ HTTP
         const httpSoilChart = createChart('httpSoilChart', 'Độ ẩm (ThingSpeak HTTP)', 'rgba(33, 150, 243, 1)'); 
         const httpVibChart  = createChart('httpVibChart', 'Rung chấn (ThingSpeak HTTP)', 'rgba(244, 67, 54, 1)'); 
 
-        // Biểu đồ MQTT
         const mqttSoilChart = createChart('mqttSoilChart', 'Độ ẩm (HiveMQ MQTT)', 'rgba(156, 39, 176, 1)'); 
         const mqttVibChart  = createChart('mqttVibChart', 'Rung chấn (HiveMQ MQTT)', 'rgba(255, 152, 0, 1)'); 
 
@@ -152,8 +149,10 @@
         }
 
         // ==========================================
-        // 4. LUỒNG HTTP (THINGSPEAK - VẼ 2 BIỂU ĐỒ HTTP)
+        // 4. LUỒNG HTTP (THINGSPEAK) - ĐÃ CẬP NHẬT CHỐNG NHẢY DỮ LIỆU CŨ
         // ==========================================
+        let lastEntryId = null; // Biến nhớ ID dòng dữ liệu cuối
+
         async function fetchThingSpeakData() {
             const url = `https://api.thingspeak.com/channels/${TS_CHANNEL_ID}/feeds.json?api_key=${TS_READ_API_KEY}&results=1`;
             const statusHttp = document.getElementById('status-http');
@@ -165,16 +164,27 @@
                 const data = await response.json();
                 if (data.feeds && data.feeds.length > 0) {
                     const feed = data.feeds[0]; 
-                    const httpSoil = parseFloat(feed.field1) || 0;
-                    const httpVib = parseFloat(feed.field2) || 0;
-                    const time = new Date(feed.created_at).toLocaleTimeString();
+                    
+                    // Chỉ vẽ biểu đồ khi có dữ liệu mới (entry_id tăng lên)
+                    if (lastEntryId === null || feed.entry_id > lastEntryId) {
+                        lastEntryId = feed.entry_id; 
+                        
+                        const httpSoil = parseFloat(feed.field1) || 0;
+                        const httpVib = parseFloat(feed.field2) || 0;
+                        
+                        // Lấy thời gian lúc dữ liệu được tạo trên Server
+                        const time = new Date(feed.created_at).toLocaleTimeString();
 
-                    // VẼ VÀO BIỂU ĐỒ HTTP (Lưu 10 điểm = 5 phút)
-                    pushDataToChart(httpSoilChart, time, httpSoil, 10);
-                    pushDataToChart(httpVibChart, time, httpVib, 10);
+                        pushDataToChart(httpSoilChart, time, httpSoil, 10);
+                        pushDataToChart(httpVibChart, time, httpVib, 10);
 
-                    statusHttp.innerText = "ThingSpeak: Đã lưu (" + time + ")";
-                    statusHttp.className = "badge bg-green";
+                        statusHttp.innerText = "ThingSpeak: Đã lưu (" + time + ")";
+                        statusHttp.className = "badge bg-green";
+                    } else {
+                        // Mạch đang dừng, không vẽ biểu đồ, chỉ báo trạng thái
+                        statusHttp.innerText = "ThingSpeak: Chờ dữ liệu mới...";
+                        statusHttp.className = "badge bg-gray";
+                    }
                 }
             } catch (error) { 
                 statusHttp.innerText = "ThingSpeak: Lỗi kết nối";
@@ -182,11 +192,11 @@
             }
         }
 
-        setInterval(fetchThingSpeakData, 30000); // 30s/lần
+        setInterval(fetchThingSpeakData, 30000); 
         fetchThingSpeakData(); 
 
         // ==========================================
-        // 5. LUỒNG MQTT (HIVEMQ - VẼ 2 BIỂU ĐỒ MQTT)
+        // 5. LUỒNG MQTT (HIVEMQ)
         // ==========================================
         const clientId = "WebHybrid-" + Math.random().toString(16).substr(2, 8);
         const mqttClient = new Paho.MQTT.Client(MQTT_BROKER, MQTT_PORT, clientId);
@@ -205,11 +215,9 @@
                 currentSoil = data.soil || 0;
                 currentVib = data.vib || 0;
 
-                // Cập nhật số liệu trên các thẻ Card và cảnh báo
                 updateCardsUI(time);
                 updateAlertBox(); 
                 
-                // VẼ VÀO BIỂU ĐỒ MQTT (Lưu 20 điểm = 5 phút với tốc độ 15s/lần)
                 pushDataToChart(mqttSoilChart, time, currentSoil, 20);
                 pushDataToChart(mqttVibChart, time, currentVib, 20);
 
