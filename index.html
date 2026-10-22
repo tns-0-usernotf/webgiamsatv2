@@ -56,7 +56,7 @@
         <div class="card" id="card-z"><h3>Trục Z (Yaw)</h3><h2 id="val-z">-- °</h2><p>Nguồn: HiveMQ (MQTT)</p></div>
     </div>
 
-    <h3 class="section-title">Dữ liệu Môi trường (HTTP - Lưu trữ ThingSpeak)</h3>
+    <h3 class="section-title">Dữ liệu Môi trường (HTTP - Cập nhật 30s/lần)</h3>
     <div class="charts-row">
         <div class="chart-container chart-large"><canvas id="soilChart"></canvas></div>
         <div class="chart-container chart-large"><canvas id="vibChart"></canvas></div>
@@ -71,10 +71,10 @@
 
     <script>
         // ==========================================
-        // 1. CẤU HÌNH KẾT NỐI (ĐÃ CHÈN READ API KEY)
+        // 1. CẤU HÌNH KẾT NỐI 
         // ==========================================
         const TS_CHANNEL_ID = "3349950"; 
-        const TS_READ_API_KEY = "J19ZUM4EVA7CGQLJ"; // ĐÃ CẬP NHẬT 
+        const TS_READ_API_KEY = "J19ZUM4EVA7CGQLJ"; 
         
         const MQTT_BROKER = "broker.hivemq.com";
         const MQTT_PORT = 8884; 
@@ -120,22 +120,21 @@
 
             document.querySelectorAll('.card').forEach(c => { c.classList.remove('danger', 'warning'); });
 
-            if (currentVib > 2.0) { 
+            if (currentVib >= 8.5) { // Động đất khẩn cấp
                 document.getElementById('card-vib').classList.add('danger');
                 alertBox.innerText = "🚨 ĐỘNG ĐẤT: KHẨN CẤP 🚨";
                 alertBox.style.backgroundColor = "#ffcdd2"; alertBox.style.color = "#c62828"; alertBox.style.borderColor = "#c62828";
             } 
-            else if (currentSoil > 80 || maxTilt > 30.0) { 
-                if(currentSoil > 80) document.getElementById('card-soil').classList.add('danger');
+            else if (currentSoil >= 70 || maxTilt > 30.0) { // Sạt lở 
+                if(currentSoil >= 70) document.getElementById('card-soil').classList.add('danger');
                 if(Math.abs(currentAngleX) > 30) document.getElementById('card-x').classList.add('danger');
                 if(Math.abs(currentAngleY) > 30) document.getElementById('card-y').classList.add('danger');
                 
                 alertBox.innerText = "⚠️ SẠT LỞ: CẢNH BÁO MỨC ĐỘ CAO ⚠️";
                 alertBox.style.backgroundColor = "#ffe0b2"; alertBox.style.color = "#e65100"; alertBox.style.borderColor = "#e65100";
             } 
-            else if (currentVib > 1.0 || currentSoil > 60 || maxTilt > 20.0) {
-                if(currentVib > 1.0) document.getElementById('card-vib').classList.add('warning');
-                if(currentSoil > 60) document.getElementById('card-soil').classList.add('warning');
+            else if (currentVib >= 6.5 || maxTilt > 20.0) { // Cảnh báo sớm
+                if(currentVib >= 6.5) document.getElementById('card-vib').classList.add('warning');
                 if(maxTilt > 20.0) { document.getElementById('card-x').classList.add('warning'); document.getElementById('card-y').classList.add('warning'); }
                 
                 alertBox.innerText = "Chú ý: Hệ thống ghi nhận bất thường";
@@ -148,7 +147,7 @@
         }
 
         // ==========================================
-        // 4. LUỒNG HTTP (THINGSPEAK) - 30S/LẦN
+        // 4. LUỒNG HTTP (THINGSPEAK) - 30S/LẦN (ĐÃ SỬA)
         // ==========================================
         async function fetchThingSpeakData() {
             const url = `https://api.thingspeak.com/channels/${TS_CHANNEL_ID}/feeds.json?api_key=${TS_READ_API_KEY}&results=1`;
@@ -170,13 +169,15 @@
                 document.getElementById('val-soil').innerText = currentSoil + " %";
                 document.getElementById('val-vib').innerText  = currentVib + " m/s²";
 
-                pushDataToChart(soilChart, time, currentSoil, 10);
-                pushDataToChart(vibChart, time, currentVib, 10);
+                // Lưu 20 điểm vì 30s/lần -> 20 điểm = 10 phút
+                pushDataToChart(soilChart, time, currentSoil, 20); 
+                pushDataToChart(vibChart, time, currentVib, 20);
                 
                 updateAlertBox(); 
                 
                 statusHttp.innerText = "ThingSpeak: OK";
                 statusHttp.className = "badge bg-green";
+                // Đổi thông báo chờ thành 30s
                 setTimeout(() => { statusHttp.innerText = "ThingSpeak: Chờ 30s"; }, 3000);
             } catch (error) { 
                 console.error("Lỗi HTTP:", error.message); 
@@ -185,6 +186,7 @@
             }
         }
 
+        // SỬA: Gọi Fetch mỗi 30,000 milliseconds (30 giây)
         setInterval(fetchThingSpeakData, 30000);
         fetchThingSpeakData(); 
 
